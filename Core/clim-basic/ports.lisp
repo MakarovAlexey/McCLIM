@@ -36,7 +36,7 @@
 ;;;   default.  Put it after CLX, so that it won't actually be
 ;;;   reached.
 (defvar *server-path-search-order*
-    '(:beagle :gtkairo :clx :null))
+    '(:beagle :gtkairo :clx :sdl2 :null))
 
 (defun find-default-server-path ()
   (loop for port in *server-path-search-order*

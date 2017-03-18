@@ -60,11 +60,12 @@ interface management system."
 ;;; platform.
 (defsystem #:mcclim/looks
   :depends-on (#:clim
-               #-(or mcclim-gtkairo mcclim-beagle mcclim-ugly)
+               #-(or mcclim-gtkairo mcclim-beagle mcclim-ugly sdl2)
                                 #:mcclim-clx/pretty  #| adds truetype and pixie theme |#
                #+mcclim-ugly    #:mcclim-clx         #| 'raw' clim-clx backend        |#
                #+mcclim-gtkairo #:mcclim-gtkairo     #| Defunct now                   |#
                #+mcclim-beagle  #:mcclim-beagle      #| OSX native (clozure only)     |#
+               #+sdl2           #:mcclim-sdl2        #| SDL2 backend                  |#
 
                ;; null backend
                #:mcclim-null))
