@@ -79,13 +79,42 @@
 ;;; frame-manager. However, in the CLX case, we don't expect there to
 ;;; be any CLX specific panes. CLX uses the default generic panes
 ;;; instead.
+
+;;; if the pane is a subclass of basic-pane and it is not mirrored we create a new class.
+(defun maybe-mirroring (concrete-pane-class)
+  (when (and (not (subtypep concrete-pane-class 'mirrored-sheet-mixin))
+	     (subtypep concrete-pane-class 'basic-pane))
+    (let* ((concrete-pane-class-symbol (if (typep concrete-pane-class 'class)
+                                          (class-name concrete-pane-class)
+                                          concrete-pane-class))
+	   (concrete-mirrored-pane-class (concatenate 'string
+						      "CLX-"
+						      (symbol-name concrete-pane-class-symbol)
+						      "-DUMMY"))
+	   (concrete-mirrored-pane-class-symbol (find-symbol concrete-mirrored-pane-class
+							     :clim-clx)))
+      #+(or) (format *debug-io* "use dummy mirrored class ~A~%" concrete-mirrored-pane-class)
+      (unless concrete-mirrored-pane-class-symbol
+	(setf concrete-mirrored-pane-class-symbol
+	      (intern concrete-mirrored-pane-class :clim-clx))
+	(eval
+	 `(defclass ,concrete-mirrored-pane-class-symbol
+	      (clx-mirrored-sheet-mixin
+	       ,concrete-pane-class-symbol)
+	    ()
+	    (:metaclass ,(type-of (find-class concrete-pane-class-symbol))))))
+      #+(or) (format *debug-io* "create class ~A~%" concrete-mirrored-pane-class-symbol)
+      (setf concrete-pane-class (find-class concrete-mirrored-pane-class-symbol))))
+  concrete-pane-class)
+
 (defmethod make-pane-1 ((fm clx-frame-manager) (frame application-frame) type &rest args)
   (apply #'make-instance
-	 (find-concrete-pane-class type)
+	 (maybe-mirroring (find-concrete-pane-class type))
 	 :frame frame
 	 :manager fm
 	 :port (port frame)
 	 args))
+
 
 (defmethod adopt-frame :before ((fm clx-frame-manager) (frame menu-frame))
   ;; Temporary kludge.
@@ -98,14 +127,20 @@
 
 (defmethod adopt-frame :after ((fm clx-frame-manager) (frame menu-frame))
   (when (sheet-enabled-p (slot-value frame 'top-level-sheet))
-    (xlib:map-window (sheet-direct-mirror (slot-value frame 'top-level-sheet)))))
+    (xlib:map-window (sheet-direct-xmirror (slot-value frame 'top-level-sheet)))))
 
 (defgeneric tell-window-manager-about-space-requirements (pane))
 
 (defmethod adopt-frame :after ((fm clx-frame-manager) (frame application-frame))
   (let ((sheet (slot-value frame 'top-level-sheet)))
     (let* ((top-level-sheet (frame-top-level-sheet frame))
-           (mirror (sheet-direct-mirror top-level-sheet)))
+           (mirror (sheet-direct-xmirror top-level-sheet)))
+      (case (clim-extensions:find-frame-type frame)
+        (:override-redirect (setf (xlib:window-override-redirect mirror) :on))
+        (:dialog (xlib:change-property mirror
+                                       :_NET_WM_WINDOW_TYPE
+                                       (list (xlib:intern-atom (xlib:window-display mirror) :_NET_WM_WINDOW_TYPE_DIALOG))
+                                       :atom 32)))
       (multiple-value-bind (w h x y) (climi::frame-geometry* frame)
         (declare (ignore w h))
         (when (and x y)
@@ -121,7 +156,7 @@
       ;; Care for calling-frame, be careful not to trip on missing bits
       (let* ((calling-frame (frame-calling-frame frame))
              (tls (and calling-frame (frame-top-level-sheet calling-frame)))
-             (calling-mirror (and tls (sheet-mirror tls))))
+             (calling-mirror (and tls (sheet-xmirror tls))))
         (when calling-mirror
           (setf (xlib:transient-for mirror)
                 calling-mirror)))
@@ -133,7 +168,7 @@
   (multiple-value-bind (w h x y) (climi::frame-geometry* (pane-frame pane))
     (declare (ignore w h))
     (let ((q (compose-space pane)))
-      (let ((mirror (sheet-direct-mirror pane)))
+      (let ((mirror (sheet-direct-xmirror pane)))
         (setf (xlib:wm-normal-hints mirror)
               (xlib:make-wm-size-hints
                :user-specified-position-p (and x y)

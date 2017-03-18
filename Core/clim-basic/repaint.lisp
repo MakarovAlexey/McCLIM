@@ -37,11 +37,64 @@
   (declare (ignore region))
   nil)
 
+(defmethod repaint-sheet :around ((sheet basic-sheet) region)
+  (declare (ignore region))
+  (when (and (sheet-mirror sheet)
+	     (sheet-viewable-p sheet))
+    (call-next-method)))
+
+(defmethod handle-repaint :around ((sheet sheet-with-medium-mixin) region)
+  (let ((medium (sheet-medium sheet)))
+    (unless (eql region +nowhere+)
+      (with-drawing-options (medium :clipping-region region)
+	(call-next-method)))))
+
 (defmethod repaint-sheet ((sheet basic-sheet) region)
-  (map-over-sheets-overlapping-region #'(lambda (s)
-					  (handle-repaint s region))
-				      sheet
-				      region))
+  (labels ((effective-native-region (mirrored-sheet child region)
+	     (if (eq mirrored-sheet child)
+		 (region-intersection
+		  (sheet-region mirrored-sheet)
+		  region)
+		 (effective-native-region mirrored-sheet
+					  (sheet-parent child)
+					  (transform-region
+					   (sheet-transformation child)
+					   (region-intersection
+					    region
+					    (sheet-region child)))))))
+    (let ((r (bounding-rectangle
+	      (untransform-region
+	       (sheet-native-transformation sheet)
+	       (effective-native-region (sheet-mirrored-ancestor sheet) sheet region)))))
+      ;; %note-sheet-repaint-request is responsible for clearing to the background
+      ;; color before repainting
+      ;; This causes applications which want to do a double-buffered repaint,
+      ;; such as the logic cube, to flicker. On the other hand, it also
+      ;; stops things such as the listener wholine from overexposing their
+      ;; text.
+      (%note-sheet-repaint-request sheet r)
+      (handle-repaint sheet r))))
+
+(defmethod repaint-sheet :after ((sheet sheet-parent-mixin) region)
+  ;; propagate repaint to unmirrored sheets
+  (labels ((propagate-repaint-1 (sheet region)
+	   (dolist (child (sheet-children sheet))
+	     (when (and (sheet-enabled-p child)
+			(not (sheet-direct-mirror child)))
+	       (let ((child-region (region-intersection
+				     (untransform-region
+				      (sheet-transformation child)
+				      region)
+				     (sheet-region child))))
+		 (unless (eq child-region +nowhere+)
+		   (%note-sheet-repaint-request child child-region)
+		   (handle-repaint child child-region)
+		   (propagate-repaint-1 child child-region)))))))
+    (propagate-repaint-1 sheet region)))
+	       
+(defmethod repaint-sheet :after ((sheet sheet-with-medium-mixin) region)
+  ;; FIXME: Shouldn't McCLIM always do this?
+  (medium-force-output (sheet-medium sheet)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -62,12 +115,12 @@
     (queue-repaint sheet (make-instance 'window-repaint-event
                                         :sheet sheet
                                         :region (transform-region
-                                                 (sheet-native-transformation sheet)
-                                                 region)))))
+						 (sheet-native-transformation sheet)
+						 region)))))
 
 (defmethod handle-event ((sheet standard-repainting-mixin)
 			 (event window-repaint-event))
-  (handle-repaint sheet (window-event-region event)))
+  (repaint-sheet sheet (window-event-region event)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -77,14 +130,14 @@
 
 (defmethod dispatch-event
     ((sheet immediate-repainting-mixin) (event window-repaint-event))
-  (handle-repaint sheet (window-event-region event)))
+  (repaint-sheet sheet (window-event-region event)))
 
 (defmethod dispatch-repaint ((sheet immediate-repainting-mixin) region)
-  (handle-repaint sheet region))
+  (repaint-sheet sheet region))
 
 (defmethod handle-event ((sheet immediate-repainting-mixin)
 			 (event window-repaint-event))
-  (handle-repaint sheet (window-event-region event)))
+  (repaint-sheet sheet (window-event-region event)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -101,15 +154,6 @@
 				    (sheet-native-transformation sheet)
 				    region)))))
 
-;;; I know what the spec says about SHEET-MUTE-REPAINTING-MIXIN, but I don't
-;;; think it's right; "repaint-sheet that does nothing" makes no sense.
-;;; -- moore
-#+nil
-(defmethod repaint-sheet ((sheet sheet-mute-repainting-mixin) region)
-  (declare (ignorable sheet region))
-  (format *trace-output* "repaint ~S~%" sheet)
-  (values))
-
 (defmethod handle-repaint ((sheet sheet-mute-repainting-mixin) region)
   (declare (ignore region))
   nil)
@@ -119,3 +163,16 @@
   ()
   (:documentation "Internal class that implements repainting protocol based on
   whether or not multiprocessing is supported."))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; No Standard.
+
+;; as present in silica's implementation
+(defclass always-repaint-background-mixin () ())
+
+;; never repaint the background (only for speed)
+(defclass never-repaint-background-mixin () ())
+
+

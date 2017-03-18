@@ -1,25 +1,15 @@
-(in-package :clim-listener)
-
+;;; -*- Mode: Lisp; Syntax: Common-Lisp; Package: CLIM-LISTENER; -*-
+;;;
+;;; Command table and menu definitions
+;;;
 ;;; (C) Copyright 2003,2008 by Andy Hefner (ahefner@gmail.com)
 ;;; (C) Copyright 2004 by Paolo Amoroso (amoroso@mclink.it)
-
-;;; This library is free software; you can redistribute it and/or
-;;; modify it under the terms of the GNU Library General Public
-;;; License as published by the Free Software Foundation; either
-;;; version 2 of the License, or (at your option) any later version.
 ;;;
-;;; This library is distributed in the hope that it will be useful,
-;;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-;;; Library General Public License for more details.
+;;; See toplevel file 'Copyright' for the copyright details.
 ;;;
-;;; You should have received a copy of the GNU Library General Public
-;;; License along with this library; if not, write to the 
-;;; Free Software Foundation, Inc., 59 Temple Place - Suite 330, 
-;;; Boston, MA  02111-1307  USA.
 
+(in-package :clim-listener)
 
-;;; Command table and menu definitions
 
 (define-command-table application-commands)
 
@@ -413,7 +403,8 @@
                      :gesture :select
                      :documentation "Room"
                      :pointer-documentation "Room")
-  ())
+    (object)
+  (declare (ignore object)))
   
 
 (define-presentation-to-command-translator com-show-class-subclasses-translator
@@ -1044,7 +1035,7 @@ if you are interested in fixing this."))
   (terpri stream))
 
 (defun actual-name (pathname)
-  (if (directoryp pathname)
+  (if (cl-fad:directory-pathname-p pathname)
       (if (stringp (car (last (pathname-directory pathname))))
           (car (last (pathname-directory pathname)))
           (directory-namestring pathname))
@@ -1059,8 +1050,8 @@ if you are interested in fixing this."))
   (mapcar (lambda (x) (sort-pathnames x sort-by))
           (multiple-value-list
            (if (not group-dirs) (values list)
-             (values (remove-if-not #'directoryp list)
-                     (remove-if #'directoryp list))))))
+             (values (remove-if-not #'cl-fad:directory-pathname-p list)
+                     (remove-if #'cl-fad:directory-pathname-p list))))))
 
 (defun garbage-name-p (name)
   (when (> (length name) 2)
@@ -1079,23 +1070,12 @@ if you are interested in fixing this."))
                    (and hide-garbage (garbage-name-p name))))
              seq :key #'actual-name))
 
-(defun show-directory-pathnames (pathname)
-  "Convert the pathname entered by the user into a query pathname
- (the pathname which will be passed to cl:directory, potentially a
- wild pathname), and a base pathname (which directory entries may
- be printed relative to in the fashion of enough-namestring)."
-  (values (if (wild-pathname-p pathname)
-              pathname
-              (gen-wild-pathname pathname))
-          (strip-filespec pathname)))
-
 ;; Change to using an :ICONIC view for pathnames?
-
 (define-command (com-show-directory :name "Show Directory"
 				    :command-table filesystem-commands
                                     :menu t
 				    :provide-output-destination-keyword t)
-    ((pathname 'pathname #+nil(or 'string 'pathname) :prompt "pathname")
+    ((pathname 'pathname :prompt "pathname")
      &key
      (sort-by '(member name size modify none) :default 'name)
      (show-hidden  'boolean :default nil :prompt "show hidden")
@@ -1106,13 +1086,19 @@ if you are interested in fixing this."))
      (full-names 'boolean :default nil :prompt "show full name?")
      (list-all-direct-subdirectories 'boolean :default nil :prompt "list all direct subdirectories?"))
 
-  (multiple-value-bind (query-pathname base-pathname)
-      (show-directory-pathnames pathname)
-    
-    (let ((dir (if list-all-direct-subdirectories
-                   (list-directory-with-all-direct-subdirectories query-pathname)
-                   (list-directory query-pathname))))
-
+  (let* ((pathname (probe-file pathname))
+	 (query-pathname (make-pathname :name (or (pathname-name pathname) :wild)
+                                        :type (or (pathname-type pathname) :wild)
+                                        :version (or (pathname-version pathname) :wild)))
+         (base-pathname (cl-fad:pathname-directory-pathname pathname))
+         (dir (uiop:while-collecting (files)
+		(mapc (lambda (path)
+			(when (or (pathname-match-p path query-pathname)
+				  (and list-all-direct-subdirectories
+				       (cl-fad:directory-pathname-p path)))
+			  ;; files is a collector defined above
+			  (files (truename path))))
+		      (cl-fad:list-directory base-pathname)))))
     (with-text-family (t :sans-serif)
       (invoke-as-heading
        (lambda ()
@@ -1139,8 +1125,6 @@ if you are interested in fixing this."))
         ;; of the "Parent Directory" line.
         (terpri))
 
-
-
       (dolist (group (split-sort-pathnames dir group-directories sort-by))
         (unless show-all
           (setf group (filter-garbage-pathnames group show-hidden hide-garbage)))
@@ -1157,19 +1141,7 @@ if you are interested in fixing this."))
              (setf (stream-cursor-position *standard-output*) (values 0 y))))
           (:list (dolist (ent group)
                    (let ((ent (merge-pathnames ent pathname)))
-                    (pretty-pretty-pathname ent *standard-output* full-names))))))))))
-
-#+nil   ; OBSOLETE
-(define-presentation-to-command-translator show-directory-translator
-  (clim:pathname com-show-directory filesystem-commands :gesture :select
-		 :pointer-documentation ((object stream)
-					 (format stream "Show directory ~A" object))
-                 :tester-definitive t
-		 :tester ((object)
-			  (directoryp object)))
-  (object)
-  (list object))
-
+                     (pretty-pretty-pathname ent *standard-output* full-names)))))))))
 
 (define-command (com-change-directory :name "Change Directory"
                                       :menu t
@@ -1177,10 +1149,12 @@ if you are interested in fixing this."))
   ((pathname 'pathname :prompt "pathname"))
   (let ((pathname (merge-pathnames
                    ;; helpfully fix things if trailing slash wasn't entered
-                   (coerce-to-directory pathname))))
+                   (cl-fad:pathname-as-directory pathname))))
     (if (not (probe-file pathname))
         (note "~A does not exist.~%" pathname)
-        (change-directory pathname))))
+        (progn
+	  (uiop:chdir pathname)
+	  (setf *default-pathname-defaults* pathname)))))
 
 (define-command (com-up-directory :name "Up Directory"
                                   :menu t
@@ -1188,7 +1162,8 @@ if you are interested in fixing this."))
   ()
   (let ((parent (parent-directory *default-pathname-defaults*)))
     (when parent
-      (change-directory parent)
+      (uiop:chdir pathname)
+      (setf *default-pathname-defaults* pathname)
       (italic (t)
         (format t "~&The current directory is now ")
         (present (truename parent))
@@ -1205,7 +1180,7 @@ if you are interested in fixing this."))
                                  (format stream "Change to this directory"))
                  
 		 :tester ((object)
-			  (directoryp object)))
+			  (cl-fad:directory-pathname-p object)))
   (object)
   (list object))
 
@@ -1257,7 +1232,7 @@ if you are interested in fixing this."))
                  (format nil "Show Files Matching ~A" pathname)))
         ((not (probe-file pathname))
          (values nil nil nil))
-        ((directoryp pathname)
+        ((cl-fad:directory-pathname-p pathname)
          (values `(com-show-directory ,pathname)
                  "Show Directory"
                  (format nil "Show Directory ~A" pathname)))
@@ -1308,7 +1283,7 @@ if you are interested in fixing this."))
                                     :menu t
                                     :command-table directory-stack-commands)
   ((pathname 'pathname :prompt "directory"))
-  (let ((pathname (merge-pathnames (coerce-to-directory pathname))))
+  (let ((pathname (merge-pathnames (cl-fad:pathname-as-directory pathname))))
     (if (not (probe-file pathname))
         (note "~A does not exist.~%" pathname)
         (progn (push *default-pathname-defaults* *directory-stack*)
@@ -1361,7 +1336,8 @@ if you are interested in fixing this."))
 
 (define-presentation-to-command-translator display-dir-stack-translator
   (directory-stack com-display-directory-stack filesystem-commands :gesture :select)
-  () ())
+    (object)
+  (declare (ignore object)))
 
 (define-command (com-edit-file :name "Edit File"
                                :menu t
@@ -1374,7 +1350,9 @@ if you are interested in fixing this."))
   (clim:pathname com-edit-file filesystem-commands :gesture :select
 		 :pointer-documentation ((object stream)
 					 (format stream "Edit ~A" object))
-		 :documentation ((stream) (format stream "Edit File"))
+		 :documentation ((object stream)
+                                 (declare (ignore object))
+                                 (format stream "Edit File"))
 		 :tester ((object)
 			  (and (not (wild-pathname-p object))
                                (probe-file object)
@@ -1394,7 +1372,9 @@ if you are interested in fixing this."))
   (clim:pathname com-show-file filesystem-commands :gesture :select
 		 :pointer-documentation ((object stream)
 					 (format stream "Show ~A" object))
-		 :documentation ((stream) (format stream "Show File"))
+		 :documentation ((object stream)
+                                 (declare (ignore object))
+                                 (format stream "Show File"))
 		 :tester ((object)
 			  (and (not (wild-pathname-p object))
                                (probe-file object)
@@ -1433,8 +1413,10 @@ if you are interested in fixing this."))
   (function-name com-edit-definition lisp-commands :gesture :select
 	  :pointer-documentation ((object stream)
 				  (format stream "Edit Definition of ~A" object))
-	  :documentation ((stream) (format stream "Edit Definition")))
-  (object)
+	  :documentation ((object stream)
+                          (declare (ignore object))
+                          (format stream "Edit Definition")))
+    (object)
   (list object))
 		   
 
@@ -1656,7 +1638,9 @@ if you are interested in fixing this."))
     (package com-set-package lisp-commands
              :pointer-documentation ((object stream)
                                      (format stream "Set current package to ~A" (package-name object)))
-             :documentation ((stream) (format stream "Set Package"))
+             :documentation ((object stream)
+                             (declare (ignore object))
+                             (format stream "Set Package"))
              :menu t
              :tester ((object) (not (eql *package* object))))
     (object)

@@ -1,7 +1,7 @@
 
 ;;; CLIM-Examples depends on having at least one backend loaded.
-(defsystem #:clim-examples
-    :depends-on (#:mcclim #:mcclim-layouts/tab)
+(asdf:defsystem #:clim-examples
+    :depends-on (#:mcclim #:mcclim-layouts/tab :mcclim-raster-image/opticl)
     :components
     ((:file "package")
      (:file "calculator")
@@ -13,12 +13,12 @@
      (:file "postscript-test")
      (:file "puzzle")
      (:file "transformations-test")
-     (:file "demodemo" :depends-on ("tabdemo"))
+     (:file "town-example")
+     (:file "demodemo" :depends-on ("tabdemo" "town-example"))
      (:file "stream-test")
      (:file "presentation-test")
      (:file "dragndrop")
      (:file "gadget-test")
-     (:file "accepting-values")
      (:file "method-browser")
      (:file "stopwatch")
      (:file "dragndrop-translator")
@@ -31,5 +31,12 @@
      (:file "tabdemo")
      (:file "bordered-output-examples")
      (:file "misc-tests")
+     (:file "drawing-tests")
      (:file "image-viewer")
-     (:file "goatee-test")))
+     (:file "sliderdemo")
+     (:file "accepting-values")
+     (:file "accepting-values-test")))
+
+(asdf:defsystem #:clim-examples/superapp
+  :depends-on (#:mcclim #:bordeaux-threads)
+  :components ((:file "superapp")))

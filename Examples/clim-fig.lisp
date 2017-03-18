@@ -327,15 +327,20 @@
     (blank-area com-add-figure clim-fig
                 :gesture :select ; XXX
                 :echo nil
-                :tester ((window) (typep window 'canvas-pane)))
-  (x y)
+                :tester ((object window)
+                         (declare (ignore object))
+                         (typep window 'canvas-pane)))
+    (object x y)
+  (declare (ignore object))
   (list x y))
 
 (define-presentation-to-command-translator move-figure
     (figure com-move-figure clim-fig
             :gesture :menu ; XXX
             :echo nil)
-  (presentation x y)
+    (object presentation x y)
+  ;; xxx: inv-2016-08-22
+  ;; (declare (ignore object))
   (list presentation x y))
 
 (defmethod generate-panes :after (frame-manager (frame clim-fig))
@@ -380,11 +385,11 @@
                 (clim-fig-redo-list *application-frame*)))
   (window-clear *standard-output*))
 
-(define-clim-fig-command (com-add-figure :name nil) ((x 'real) (y 'real))
+(define-clim-fig-command (com-add-figure :name nil) ((x real) (y real))
   (handle-draw-object (find-pane-named *application-frame* 'canvas) x y))
 
 (define-clim-fig-command (com-move-figure :name nil)
-    ((figure 'figure) (x 'real) (y 'real))
+    ((figure figure) (x real) (y real))
   (handle-move-object (find-pane-named *application-frame* 'canvas)
                       figure x y))
 

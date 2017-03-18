@@ -1944,7 +1944,9 @@
    #:define-bitmap-file-reader
    #:unsupported-bitmap-format
    #:bitmap-format
-   #:*default-vertical-scroll-bar-position*))
+   #:*default-vertical-scroll-bar-position*
+
+   #:find-frame-type))
 
 ;;; Symbols that must be defined by a backend.
 ;;;
@@ -2042,6 +2044,8 @@
   (:nicknames :climi)
   #+excl
   (:import-from :excl compile-system load-system)
+  (:import-from #:alexandria
+                #:ensure-gethash)
   (:intern #:letf))
 
 (defpackage :clim-user

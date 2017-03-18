@@ -80,7 +80,8 @@
     (continuation record continuation-args))
 
 (defun map-over-output-records
-    (continuation record &optional x-offset y-offset &rest continuation-args)
+    (continuation record &optional (x-offset 0) (y-offset 0)
+     &rest continuation-args)
   (declare (ignore x-offset y-offset))
   (map-over-output-records-1 continuation record continuation-args))
 
@@ -377,7 +378,7 @@ recording stream. If it is T, *STANDARD-OUTPUT* is used.")
         (output-record-hit-detection-rectangle* record)
       (ecase state
         (:highlight
-         (draw-rectangle* (sheet-medium stream) x1 y1 (1- x2) (1- y2)
+         (draw-rectangle* (sheet-medium stream) (1+ x1) (1+ y1) (1- x2) (1- y2)
                           :filled nil :ink +foreground-ink+)) ; XXX +FLIPPING-INK+? 
         (:unhighlight
 	 ;; FIXME: repaint the hit detection rectangle. It could be
@@ -1987,8 +1988,9 @@ were added."
 (defmethod initialize-instance :after
     ((stream standard-output-recording-stream) &rest args)
   (declare (ignore args))
-  (let ((history (make-instance 'standard-tree-output-history :stream stream)))
-    (setf (slot-value stream 'output-history) history
+  (let ((history (stream-output-history stream)))
+    (setf (slot-value history 'stream) stream
+          (slot-value stream 'output-history) history
           (stream-current-output-record stream) history)))
 
 ;;; Used in initializing clim-stream-pane

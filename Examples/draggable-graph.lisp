@@ -84,7 +84,7 @@
     (make-rectangle* x0 y0 x1 y1)))
 
 (define-draggable-graph-demo-command (com-drag-node)
-    ((record t) (x 'real) (y 'real))
+    ((record t) (x real) (y real))
   (let* ((graph-node (find-graph-node record))
 	 (edges (node-edges graph-node))
 	 (erase-region (stupid-copy-rectangle
@@ -113,9 +113,11 @@
          
 (define-presentation-to-command-translator record-dragging-translator
     (t com-drag-node draggable-graph-demo
-       :tester ((presentation)
+       :tester ((object presentation)
+                (declare (ignore object))
                 (find-graph-node presentation)))
-  (presentation x y)
+    (object presentation x y)
+  (declare (ignore object))
   (list presentation x y))
 
 ;;; (CSR) This demo code is quite cool; visually, it's a little

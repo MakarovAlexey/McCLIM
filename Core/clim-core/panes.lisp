@@ -817,7 +817,7 @@ order to produce a double-click")
 ;;; BASIC PANE
 
 (defclass basic-pane (standard-space-requirement-options-mixin
-                      sheet-parent-mixin mirrored-sheet-mixin
+                      sheet-parent-mixin ;mirrored-sheet-mixin
                       pane)
   ((foreground       :initarg :foreground
                      :reader pane-foreground)
@@ -896,7 +896,9 @@ order to produce a double-click")
 
 ;;; TOP-LEVEL-SHEET
 
-(defclass top-level-sheet-pane (composite-pane)
+(defclass top-level-sheet-pane (;;permanent-medium-sheet-output-mixin
+				;;mirrored-sheet-mixin
+				composite-pane)
   ()
   (:documentation "For the first pane in the architecture"))
 
@@ -936,28 +938,10 @@ order to produce a double-click")
 		    (clamp width  (sr-min-width pane)  (sr-max-width pane))
 		    (clamp height (sr-min-height pane) (sr-max-height pane)))))
 
-(defmethod handle-event ((pane top-level-sheet-pane)
-			 (event window-configuration-event))
-  (let ((x (window-configuration-event-x event))
-	(y (window-configuration-event-y event))
-	(width (window-configuration-event-width event))
-        (height (window-configuration-event-height event)))
-    (with-bounding-rectangle* (old-x1 old-y1 old-x2 old-y2) (sheet-region pane)
-      (let ((old-width  (- old-x2 old-x1))
-            (old-height (- old-y2 old-y1)))
-        ;; Avoid going into an infinite loop by not using
-        ;; (SETF SHEET-TRANSFORMATION).
-        (setf (slot-value pane 'transformation)
-	      (make-translation-transformation x y))
-        (invalidate-cached-transformations pane)
-        ;; Avoid going into an infinite loop by not using
-        ;; (SETF SHEET-REGION).
-        (setf (slot-value pane 'region)
-	      (make-bounding-rectangle 0 0 width height))
-        (when (or (/= width  old-width)
-                  (/= height old-height))
-          (invalidate-cached-regions pane)
-          (allocate-space pane width height))))))
+(defmethod note-sheet-region-changed :after ((pane top-level-sheet-pane))
+  (with-bounding-rectangle* (x1 y1 x2 y2) (sheet-region pane)
+    (allocate-space pane (- x2 x1) (- y2 y1))))
+
 
 (defmethod handle-event ((pane top-level-sheet-pane)
 			 (event window-manager-delete-event))
@@ -970,7 +954,8 @@ order to produce a double-click")
   (:documentation "Top-level sheet without window manager intervention"))
 
 (defmethod sheet-native-transformation ((sheet top-level-sheet-pane))
-  +identity-transformation+)
+  (with-slots (native-transformation) sheet
+    	native-transformation))
 
 (defmethod change-space-requirements ((pane unmanaged-top-level-sheet-pane)
                                       &rest space-req-keys
@@ -1900,8 +1885,8 @@ order to produce a double-click")
     :documentation "Whether to put the vertical scroll bar on the left hand or
                     right hand side of the scroller pane."))
   (:default-initargs
-   :x-spacing 4
-   :y-spacing 4))
+   :x-spacing 0
+   :y-spacing 0))
 
 (defgeneric scroll-bar-values (scroll-bar)
   (:documentation "Returns the min value, max value, thumb size, and value of a
@@ -2714,44 +2699,48 @@ current background message was set."))
 
 ;;; CONSTRUCTORS
 
+;;; XXX: `scroll-bars' and `borders' parameters are at least
+;;; troublesome – shouldn't `make-clim-stream-pane' return a
+;;; `clim-stream-pane' of requested type?
 (defun make-clim-stream-pane (&rest options
-				    &key (type 'clim-stream-pane)
-                                    (scroll-bars :vertical)
-                                    (border-width 1)
-				    &allow-other-keys)
-  (with-keywords-removed (options (:type :scroll-bars :border-width))
+                              &key (type 'clim-stream-pane)
+                                (scroll-bars :vertical)
+                                (borders t)
+                                &allow-other-keys)
+  (with-keywords-removed (options (:type :scroll-bars :borders))
     ;; The user space requirement options belong to the scroller ..
     (let* ((space-keys '(:width :height :max-width :max-height
 			 :min-width :min-height))
 	   (user-sr nil)
-	   (pane-options nil)
-	   (borderp (and border-width (> border-width 0))))
+	   (pane-options nil))
       (loop  for (key value) on options by #'cddr
-	     if (and (member key space-keys :test #'eq)
-		     (not (eq value :compute)))
-	      nconc (list key value) into space-options
-	     else
-	      nconc (list key value) into other-options
-	     end
-	     finally (progn
-		       (setq user-sr space-options)
-		       (setq pane-options other-options)))
+         if (and (member key space-keys :test #'eq)
+                 (not (eq value :compute)))
+         nconc (list key value) into space-options
+         else
+         nconc (list key value) into other-options
+         end
+         finally (progn
+                   (setq user-sr space-options)
+                   (setq pane-options other-options)))
       (let ((pane (apply #'make-pane type (append pane-options
 						  (unless (or scroll-bars
-							      borderp)
+							      borders)
 						    user-sr)))))
 	(when scroll-bars
 	  (setq pane (apply #'make-pane 'scroller-pane
 			    :scroll-bar scroll-bars
 			    :contents (list (make-pane 'viewport-pane
 						       :contents (list pane)))
-			    (unless borderp
+			    (unless borders
 			      user-sr))))
-	(when borderp
+	(when borders
 	  (setq pane (apply #'make-pane 'border-pane
-                      :border-width border-width
-                      :contents (list pane)
-                      user-sr)))
+                            :border-width (if (not (numberp borders))
+                                              1
+                                              borders)
+                            :contents (list pane)
+                            user-sr)))
 	pane))))
 
 (defun make-clim-interactor-pane (&rest options)
@@ -2856,6 +2845,8 @@ current background message was set."))
 		(eq (frame-state frame) :shrunk))
       (enable-frame frame))
     ;; Start a new thread to run the event loop, if necessary.
+    (let ((*application-frame* frame))
+      (stream-set-input-focus (slot-value frame 'stream)))
     #+clim-mp
     (unless input-buffer
       (clim-sys:make-process (lambda () (let ((*application-frame* frame))

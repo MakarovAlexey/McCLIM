@@ -61,10 +61,11 @@
                    (make-demo-button "Method Browser" 'method-browser)
                    (make-demo-button "Address Book"  'address-book)
                    (make-demo-button "Puzzle"  'puzzle)
+                   (make-demo-button "Colorslider" 'colorslider)
                    (make-demo-button "Logic Cube" 'logic-cube)
+                   (make-demo-button "Menu Test"  'menutest:menutest)
                    (make-demo-button "Gadget Test"  'gadget-test)
                    (make-demo-button "Drag and Drop" 'dragndrop)
-                   ;(make-demo-button "Colorslider" 'colorslider)                   
                    (make-demo-button "D&D Translator" 'drag-test)
                    (make-demo-button "Draggable Graph" 'draggable-graph-demo)
                    (make-demo-button "Image viewer" 'image-viewer)
@@ -75,21 +76,31 @@
 				(declare (ignore ignore))
 				(format *trace-output* "~&You chose: ~A~%"
 					(select-font))))
-                   (make-demo-button "Tab Layout" 'tabdemo:tabdemo)))
+                   (make-demo-button "Tab Layout" 'tabdemo:tabdemo)
+                   (make-demo-button "Summation" 'summation)
+                   (make-demo-button "Slider demo" 'sliderdemo)
+                   (make-demo-button "German Towns"
+                                     'town-example:town-example)
+                   ;; this demo invokes the debugger
+                   #+ (or) (make-demo-button "Traffic lights" 'traffic-lights)))
                (labelling (:label "Tests")
                  (vertically (:equalize-width t)
+                   (make-demo-button "Stream test" 'stream-test)
                    (make-demo-button "Label Test" 'label-test)
                    (make-demo-button "Table Test" 'table-test)
                    (make-demo-button "Scroll Test" 'Scroll-test)
                    (make-demo-button "List Test" 'list-test)
+                   (make-demo-button "Option Test" 'option-test)
                    (make-demo-button "HBOX Test"  'hbox-test)
                    (make-demo-button "Text Size Test"  'text-size-test)
-                   (make-demo-button "Goatee Test" 'goatee::goatee-test)
                    (make-demo-button "Drawing Benchmark"
 				     'drawing-benchmark)
                    (make-demo-button "Border Styles Test" 'bordered-output)
                    (make-demo-button "Misc. Tests"
-				     'misc-tests)))))))))
+				     'misc-tests)
+		   (make-demo-button "Drawing Tests"
+				     'drawing-tests)
+                   (make-demo-button "Accepting Values Test"  'av-test)))))))))
 
 (defun demodemo ()
   (run-frame-top-level (make-application-frame 'demodemo)))
@@ -192,18 +203,12 @@
   (make-space-requirement :width 800
                           :height 1e3))
 
-(defmethod repaint-sheet ((pane foo-pane) region)
+(defmethod handle-repaint ((pane foo-pane) region)
   (draw-line* pane 50 50 200 50)
   (multiple-value-bind (x1 y1 x2 y2) (bounding-rectangle* region)
     (let ((k 20))
       (loop for y from (* k (floor (- y1 10) k)) below (+ y2 10) by k do
             (draw-text* pane (format nil "~D" y) 20 y)))))
-
-(defmethod dispatch-repaint ((foo-pane foo-pane) region)
-  (repaint-sheet foo-pane region))
-
-(defmethod handle-event ((pane foo-pane) (event window-repaint-event))
-  (repaint-sheet pane (window-event-region event)))
 
 (define-application-frame scroll-test
     () ()
@@ -240,7 +245,7 @@
 (define-presentation-type list-test-symbol ())
 
 (define-list-test-command com-describe-symbol
-    ((sym 'list-test-symbol :gesture :select))
+    ((sym list-test-symbol :gesture :select))
   ;; Let's print only three lines, we don't have space for more.
   (with-input-from-string (s (with-output-to-string (s) (describe sym s)))
     (dotimes (x 3)
@@ -253,6 +258,20 @@
 		       (find-pane-named *application-frame* 'substring))
 		      :clim t)))
 
+(define-application-frame option-test
+    () ()
+    (:panes (option-pane-1 :option-pane
+                           :value 1
+                           :items '(1 2 3 4 6 7)
+                           :value-changed-callback (constantly nil))
+            (option-pane-2 :option-pane
+                           :value "Option 1"
+                           :items '("Option 1" "Option 2" "Option 3" "Option 4" "Option 6" "Option 7")
+                           :value-changed-callback (constantly nil)))
+    (:layouts
+     (:default
+         (vertically (:label "Option panes example")
+           (1/2 option-pane-1)
+           (1/2 option-pane-2)))))
 
-
-(format t "~&;; try (CLIM-DEMO::DEMODEMO)~%")
+(format t "~&;; try (CLIM-DEMO:DEMODEMO)~%")

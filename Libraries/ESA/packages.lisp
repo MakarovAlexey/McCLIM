@@ -91,6 +91,7 @@
            #:find-applicable-command-table
            #:esa-command-parser
            #:esa-partial-command-parser
+           #:esa-command-table
 
            #:gesture-matches-gesture-name-p #:meta-digit
            #:proper-gesture-p
@@ -135,16 +136,3 @@
            #:com-find-file #:com-find-file-read-only
            #:com-read-only #:com-set-visited-file-name
            #:com-save-buffer #:com-write-buffer))
-
-#-(or mcclim building-mcclim)
-(defpackage :clim-extensions
-  (:use :clim-lisp :clim)
-  (:export
-   #:+blue-violet+
-   #:+dark-blue+
-   #:+dark-green+
-   #:+dark-violet+
-   #:+gray50+
-   #:+gray85+
-   #:+maroon+
-   #:+purple+))

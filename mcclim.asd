@@ -60,19 +60,19 @@ interface management system."
 ;;; platform.
 (defsystem #:mcclim/looks
   :depends-on (#:clim
-               #-(or mcclim-gtkairo mcclim-beagle mcclim-ugly sdl2)
-                                #:mcclim-clx/pretty  #| adds truetype and pixie theme |#
-               #+mcclim-ugly    #:mcclim-clx         #| 'raw' clim-clx backend        |#
-               #+mcclim-gtkairo #:mcclim-gtkairo     #| Defunct now                   |#
-               #+mcclim-beagle  #:mcclim-beagle      #| OSX native (clozure only)     |#
-               #+sdl2           #:mcclim-sdl2        #| SDL2 backend                  |#
+               #-(or mcclim-beagle mcclim-ugly sdl2)
+                                #:mcclim-clx/pretty  #| adds truetype        |#
+               #+mcclim-ugly    #:mcclim-clx         #| raw clim-clx backend |#
+               #+mcclim-beagle  #:mcclim-beagle      #| OSX native (clozure) |#
+               #+sdl2           #:mcclim-sdl2        #| SDL2 backend         |#
 
                ;; null backend
                #:mcclim-null))
 
 (defsystem #:mcclim/extensions
   :depends-on (#:mcclim-bitmaps
-               #:conditional-commands))
+               #:conditional-commands
+               #:mcclim-layouts/tab))
 
 (defmethod perform :after ((op load-op) (c (eql (find-system :mcclim))))
   (pushnew :clim *features*)) ;; The fact that CLIM itself is available is true when all is loaded.

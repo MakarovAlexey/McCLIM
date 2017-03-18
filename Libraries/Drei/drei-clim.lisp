@@ -520,6 +520,9 @@ record."))
 (defmethod region-difference (region1 (region2 drei-area))
   (region-difference region1 (bounding-rectangle region2)))
 
+(defmethod transform-region (transformation (region drei-area))
+  (transform-region transformation (bounding-rectangle region)))
+
 ;; For areas, we need to switch to ESA abort gestures after we have
 ;; left the CLIM gesture reading machinery, but before we start doing
 ;; ESA gesture processing.
@@ -611,9 +614,7 @@ is not T, NIL or a `minibuffer-pane'."))))
                     :minibuffer minibuffer-pane
                     :contents (list pane minibuffer-pane))))
       (when borderp
-        (setf pane (#+(or mcclim building-mcclim)
-                      climi::bordering
-                      #-(or mcclim building-mcclim) outlining
-                      (:border-width border-width)
-                      pane)))
+        (setf pane (climi::bordering
+                       (:border-width border-width)
+                     pane)))
       pane)))

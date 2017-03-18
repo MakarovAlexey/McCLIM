@@ -26,6 +26,17 @@
 
 (in-package :clim-clx)
 
+(defgeneric X-pixel (port color))
+
+(defmethod X-pixel ((port clx-basic-port) color)
+  (let ((table (slot-value port 'color-table)))
+    (or (gethash color table)
+	(setf (gethash color table)
+	      (multiple-value-bind (r g b) (color-rgb color)
+		(xlib:alloc-color (xlib:screen-default-colormap
+                                   (clx-port-screen port))
+				  (xlib:make-color :red r :green g :blue b)))))))
+
 ;;; Needed changes:
 
 ;; The gc slot in clx-medium must be either thread local, or
@@ -457,7 +468,7 @@ time an indexed pattern is drawn.")
                                           :width w :height h
                                           :format :z-pixmap
                                           :data converted-data)))
-            (xlib:put-image (pixmap-mirror pm) pm-gc image
+            (xlib:put-image (pixmap-xmirror pm) pm-gc image
                             :x 0 :y 0
                             :width w :height h)))
         
@@ -505,7 +516,7 @@ time an indexed pattern is drawn.")
                                      :depth 1
                                      :width w
                                      :height h))
-           (pm-gc (xlib:create-gcontext :drawable (pixmap-mirror pm)))
+           (pm-gc (xlib:create-gcontext :drawable (pixmap-xmirror pm)))
            (mask-gc (xlib:create-gcontext :drawable mask :foreground 1)))
 
       (xlib:draw-rectangle mask mask-gc 0 0 w h t)
@@ -594,18 +605,22 @@ time an indexed pattern is drawn.")
                                    (region-set-regions clipping-region
                                                        :normalize :y-banding)))
           nconcing (multiple-value-list (region->clipping-values region))))))
-    
-(defmacro with-clx-graphics ((medium) &body body)
+
+(defmacro with-clx-graphics ((&optional (mirror 'mirror)
+                                        (line-style 'line-style)
+                                        (ink 'ink)
+                                        (gcontext 'gc))
+                                medium &body body)
   (let ((medium-var (gensym)))
     `(let* ((,medium-var ,medium)
-	    (mirror (sheet-mirror (medium-sheet ,medium-var))))
+	    (,mirror (sheet-xmirror (medium-sheet ,medium-var))))
        (when mirror
-	 (let* ((line-style (medium-line-style ,medium-var))
-		(ink        (medium-ink ,medium-var))
-		(gc         (medium-gcontext ,medium-var ink)))
-	   (declare (ignorable line-style gc))
+	 (let* ((,line-style (medium-line-style ,medium-var))
+		(,ink        (medium-ink ,medium-var))
+		(,gcontext   (medium-gcontext ,medium-var ink)))
+	   (declare (ignorable ,line-style ,gcontext))
 	   (unwind-protect
-		(unless (eql ink +transparent-ink+)
+		(unless (eql ,ink +transparent-ink+)
 		  (progn ,@body))))))))
 
 
@@ -624,12 +639,13 @@ time an indexed pattern is drawn.")
 	(multiple-value-bind (width height)
 	    (transform-distance (medium-transformation from-drawable)
 				width height)
-	  (xlib:copy-area (sheet-direct-mirror (medium-sheet from-drawable))
+	  (xlib:copy-area (sheet-xmirror (medium-sheet from-drawable))
+			  ;; why using the context of from-drawable?
 			  (medium-gcontext from-drawable +background-ink+)
 			  (round-coordinate from-x) (round-coordinate from-y)
 			  (round width) (round height)
 			  (or (medium-buffer to-drawable)
-			      (sheet-direct-mirror (medium-sheet to-drawable)))
+			      (sheet-xmirror (medium-sheet to-drawable)))
 			  (round-coordinate to-x) (round-coordinate to-y)))))))
 
 (defmethod medium-copy-area ((from-drawable clx-medium) from-x from-y width height
@@ -637,32 +653,34 @@ time an indexed pattern is drawn.")
   (let* ((from-sheet (medium-sheet from-drawable))
 	 (from-transformation (sheet-native-transformation from-sheet)))
     (with-transformed-position (from-transformation from-x from-y)
-      (xlib:copy-area (sheet-direct-mirror (medium-sheet from-drawable))
-		      (medium-gcontext from-drawable +background-ink+)
-		      (round-coordinate from-x) (round-coordinate from-y)
-		      (round width) (round height)
-		      (pixmap-mirror to-drawable)
-		      (round-coordinate to-x) (round-coordinate to-y)))))
+      (climi::with-pixmap-medium (to-medium to-drawable)
+	(xlib:copy-area (sheet-xmirror (medium-sheet from-drawable))
+			;; we can not use from-drawable
+			(medium-gcontext to-medium +background-ink+)
+			(round-coordinate from-x) (round-coordinate from-y)
+			(round width) (round height)
+			(pixmap-xmirror to-drawable)
+			(round-coordinate to-x) (round-coordinate to-y))))))
 
 (defmethod medium-copy-area ((from-drawable pixmap) from-x from-y width height
                              (to-drawable clx-medium) to-x to-y)
   (with-transformed-position ((sheet-native-transformation (medium-sheet to-drawable))
                               to-x to-y)
-    (xlib:copy-area (pixmap-mirror from-drawable)
+    (xlib:copy-area (pixmap-xmirror from-drawable)
                     (medium-gcontext to-drawable +background-ink+)
                     (round-coordinate from-x) (round-coordinate from-y)
 		    (round width) (round height)
-                    (or (medium-buffer to-drawable) (sheet-direct-mirror (medium-sheet to-drawable)))
+                    (or (medium-buffer to-drawable) (sheet-xmirror (medium-sheet to-drawable)))
                     (round-coordinate to-x) (round-coordinate to-y))))
 
 (defmethod medium-copy-area ((from-drawable pixmap) from-x from-y width height
                              (to-drawable pixmap) to-x to-y)
-  (xlib:copy-area (pixmap-mirror from-drawable)
+  (xlib:copy-area (pixmap-xmirror from-drawable)
                   (medium-gcontext (sheet-medium (slot-value to-drawable 'sheet))
                                    +background-ink+)              
                   (round-coordinate from-x) (round-coordinate from-y)
                   (round width) (round height)
-                  (pixmap-mirror to-drawable)
+                  (pixmap-xmirror to-drawable)
                   (round-coordinate to-x) (round-coordinate to-y)))
 
 
@@ -672,7 +690,7 @@ time an indexed pattern is drawn.")
   (with-transformed-position ((sheet-native-transformation
                                (medium-sheet medium))
                               x y)
-    (with-clx-graphics (medium)
+    (with-clx-graphics () medium
       (cond ((< (line-style-thickness line-style) 2)
              (let ((x (round-coordinate x))
                    (y (round-coordinate y)))
@@ -696,7 +714,7 @@ time an indexed pattern is drawn.")
   (with-transformed-positions ((sheet-native-transformation
                                 (medium-sheet medium))
                                coord-seq)
-    (with-clx-graphics (medium)
+    (with-clx-graphics () medium
       (cond ((< (line-style-thickness line-style) 2)
              (do-sequence ((x y) coord-seq)
                (let ((x (round-coordinate x))
@@ -721,7 +739,7 @@ time an indexed pattern is drawn.")
   (let ((tr (sheet-native-transformation (medium-sheet medium))))
     (with-transformed-position (tr x1 y1)
       (with-transformed-position (tr x2 y2)
-        (with-clx-graphics (medium)
+        (with-clx-graphics () medium
           (let ((x1 (round-coordinate x1))
                 (y1 (round-coordinate y1))
                 (x2 (round-coordinate x2))
@@ -760,7 +778,7 @@ time an indexed pattern is drawn.")
                                 (medium-sheet medium))
                                coord-seq)
     (setq coord-seq (map 'vector #'round-coordinate coord-seq))
-    (with-clx-graphics (medium)
+    (with-clx-graphics () medium
       (xlib:draw-lines mirror gc
                        (if closed
                            (concatenate 'vector
@@ -781,7 +799,7 @@ time an indexed pattern is drawn.")
   (let ((tr (sheet-native-transformation (medium-sheet medium))))
     (with-transformed-position (tr left top)
       (with-transformed-position (tr right bottom)
-        (with-clx-graphics (medium)
+        (with-clx-graphics () medium
           (if (< right left)
               (rotatef left right))
           (if (< bottom top)
@@ -829,7 +847,7 @@ time an indexed pattern is drawn.")
   (with-transformed-positions ((sheet-native-transformation
 				(medium-sheet medium))
                                position-seq)
-    (with-clx-graphics (medium)
+    (with-clx-graphics () medium
       (loop
 	 for (left top right bottom) on position-seq by #'cddddr
 	 for min-x = (round-coordinate left)
@@ -852,7 +870,7 @@ time an indexed pattern is drawn.")
            (arc-angle (if (< arc-angle 0)
                           (+ (* pi 2) arc-angle)
                           arc-angle)))
-      (with-clx-graphics (medium)
+      (with-clx-graphics () medium
         (let* ((radius-dx (abs (+ radius-1-dx radius-2-dx)))
 	       (radius-dy (abs (+ radius-1-dy radius-2-dy)))
 	       (min-x (round-coordinate (- center-x radius-dx)))
@@ -878,7 +896,7 @@ time an indexed pattern is drawn.")
 	   (min-y (round-coordinate (- center-y radius)))
 	   (max-x (round-coordinate (+ center-x radius)))
 	   (max-y (round-coordinate (+ center-y radius))))
-      (with-clx-graphics (medium)
+      (with-clx-graphics () medium
         (xlib:draw-arc mirror gc
                        min-x min-y
                        (- max-x min-x) (- min-y max-y)
@@ -892,21 +910,24 @@ time an indexed pattern is drawn.")
 
 (defmethod text-style-ascent (text-style (medium clx-medium))
   (let ((font (text-style-to-X-font (port medium) text-style)))
-    (xlib:font-ascent font)))
+    (font-ascent font)))
 
 (defmethod text-style-descent (text-style (medium clx-medium))
   (let ((font (text-style-to-X-font (port medium) text-style)))
-    (xlib:font-descent font)))
+    (font-descent font)))
 
 (defmethod text-style-height (text-style (medium clx-medium))
   (let ((font (text-style-to-X-font (port medium) text-style)))
-    (+ (xlib:font-ascent font) (xlib:font-descent font))))
+    (+ (font-ascent font) (font-descent font))))
 
 (defmethod text-style-character-width (text-style (medium clx-medium) char)
-  (xlib:char-width (text-style-to-X-font (port medium) text-style) (char-code char)))
+  (font-glyph-width (text-style-to-X-font (port medium) text-style) char))
 
 (defmethod text-style-width (text-style (medium clx-medium))
   (text-style-character-width text-style medium #\m))
+
+(defmethod text-style-fixed-width-p (text-style (medium clx-medium))
+  (eql (text-style-family text-style) :fix))
 
 (eval-when (:compile-toplevel :execute)
   ;; ASCII / CHAR-CODE compatibility checking
@@ -981,42 +1002,58 @@ time an indexed pattern is drawn.")
                 (return i))
               (setf (aref dst j) elt))))))
 
-(defmethod text-size ((medium clx-medium) string &key text-style (start 0) end)
+(defmethod text-size ((medium clx-medium) string
+                      &key text-style (start 0) end)
+  (declare (optimize (speed 3)))
   (when (characterp string)
     (setf string (make-string 1 :initial-element string)))
+  (check-type string string)
+
   (unless end (setf end (length string)))
+  (check-type start (integer 0 #.array-dimension-limit))
+  (check-type end (integer 0 #.array-dimension-limit))
+
+  (when (= start end)
+    (return-from text-size (values 0 0 0 0 0)))
+
   (unless text-style (setf text-style (medium-text-style medium)))
   (let ((xfont (text-style-to-X-font (port medium) text-style)))
-    (cond ((= start end)
-           (values 0 0 0 0 0))
-          (t
-           (let ((position-newline (position #\newline string :start start :end end)))
-             (cond ((not (null position-newline))
-                    (multiple-value-bind (width ascent descent left right
-                                                font-ascent font-descent direction
-                                                first-not-done)
-                        (xlib:text-extents xfont string
-                                           :start start :end position-newline
-                                           :translate #'translate)
-                      (declare (ignorable left right
-                                          font-ascent font-descent
-                                          direction first-not-done))
-                      (multiple-value-bind (w h x y baseline)
-                          (text-size medium string :text-style text-style
-                                     :start (1+ position-newline) :end end)
-                        (values (max w width) (+ ascent descent h)
-                                x (+ ascent descent y) (+ ascent descent baseline)))))
-                   (t
-                    (multiple-value-bind (width ascent descent left right
-                                                font-ascent font-descent direction
-                                                first-not-done)
-                        (xlib:text-extents xfont string
-                                   :start start :end end
-                                   :translate #'translate)
-                      (declare (ignorable left right
-                                          font-ascent font-descent
-                                          direction first-not-done))
-                      (values width (+ ascent descent) width 0 ascent)) )))))) )
+    (let ((position-newline
+           (macrolet ((p (type)
+                        `(locally (declare (type ,type string))
+                           (position #\newline string :start start :end end))))
+             (typecase string
+               (simple-base-string (p simple-base-string))
+               #+SBCL (sb-kernel::simple-character-string (p sb-kernel::simple-character-string))
+               #+SBCL (sb-kernel::character-string (p sb-kernel::character-string))
+               (simple-string (p simple-string))
+               (string (p string))))))
+      (cond ((not (null position-newline))
+             (multiple-value-bind (width ascent descent left right
+                                         font-ascent font-descent direction
+                                         first-not-done)
+                 (font-text-extents xfont string
+                                    :start start :end position-newline
+                                    :translate #'translate)
+               (declare (ignorable left right
+                                   font-ascent font-descent
+                                   direction first-not-done))
+               (multiple-value-bind (w h x y baseline)
+                   (text-size medium string :text-style text-style
+                              :start (1+ position-newline) :end end)
+                 (values (max w width) (+ ascent descent h)
+                         x (+ ascent descent y) (+ ascent descent baseline)))))
+            (t
+             (multiple-value-bind (width ascent descent left right
+                                         font-ascent font-descent direction
+                                         first-not-done)
+                 (font-text-extents xfont string
+                                    :start start :end end
+                                    :translate #'translate)
+               (declare (ignorable left right
+                                   font-ascent font-descent
+                                   direction first-not-done))
+               (values width (+ ascent descent) width 0 ascent)) )))) )
 
 (defmethod climi::text-bounding-rectangle*
     ((medium clx-medium) string &key text-style (start 0) end)
@@ -1033,7 +1070,7 @@ time an indexed pattern is drawn.")
                     (multiple-value-bind (width ascent descent left right
                                                 font-ascent font-descent direction
                                                 first-not-done)
-                        (xlib:text-extents xfont string
+                        (font-text-extents xfont string
                                            :start start :end position-newline
                                            :translate #'translate)
                       (declare (ignorable width left right
@@ -1050,9 +1087,8 @@ time an indexed pattern is drawn.")
                     (multiple-value-bind (width ascent descent left right
                                                 font-ascent font-descent direction
                                                 first-not-done)
-                        (xlib:text-extents xfont string
-                                   :start start :end end
-                                   :translate #'translate)
+                        (font-text-extents
+                         xfont string :start start :end end :translate #'translate)
                       (declare (ignore width ascent descent)
 			       (ignore direction first-not-done))
                       ;; FIXME: Potential style points:
@@ -1060,45 +1096,42 @@ time an indexed pattern is drawn.")
                       ;; * font-ascent / ascent
                       (values left (- font-ascent) right font-descent)))))))))
 
-
-
+(defvar *draw-font-lock* (climi::make-lock "draw-font"))
 (defmethod medium-draw-text* ((medium clx-medium) string x y
                               start end
                               align-x align-y
                               toward-x toward-y transform-glyphs)
   (declare (ignore toward-x toward-y transform-glyphs))
-  (with-transformed-position ((sheet-native-transformation (medium-sheet medium))
-                              x y)
-    (with-clx-graphics (medium)
-      (when (characterp string)
-        (setq string (make-string 1 :initial-element string)))
-      (when (null end) (setq end (length string)))
-      (multiple-value-bind (text-width text-height x-cursor y-cursor baseline) 
-          (text-size medium string :start start :end end)
-        (declare (ignore x-cursor y-cursor))
-        (unless (and (eq align-x :left) (eq align-y :baseline))	    
-          (setq x (- x (ecase align-x
-                         (:left 0)
-                         (:center (round text-width 2))
-                         (:right text-width))))
-          (setq y (ecase align-y
-                    (:top (+ y baseline))
-                    (:center (+ y baseline (- (floor text-height 2))))
-                    (:baseline y)
-                    (:bottom (+ y baseline (- text-height)))))))
-      (let ((x (round-coordinate x))
-            (y (round-coordinate y)))
-        (when (and (<= #x-8000 x #x7FFF)
-                   (<= #x-8000 y #x7FFF))
-	  ;; FIXME: What could possibly be the reason for this
-	  ;; MULTIPLE-VALUE-BIND form, since both variables are
-	  ;; unused?
-          (multiple-value-bind (halt width)
-              (xlib:draw-glyphs mirror gc x y string
-                                :start start :end end
-                                :translate #'translate
-                                :size 16)
-	    (declare (ignore halt width))))))))
+  (bt:with-lock-held (*draw-font-lock*)
+    (with-transformed-position ((sheet-native-transformation
+                                 (medium-sheet medium)) x y)
+      (with-clx-graphics () medium
+        (when (characterp string)
+          (setq string (make-string 1 :initial-element string)))
+        (when (null end) (setq end (length string)))
+        (multiple-value-bind (text-width text-height x-cursor y-cursor baseline)
+            (text-size medium string :start start :end end)
+          (declare (ignore x-cursor y-cursor))
+          (unless (and (eq align-x :left) (eq align-y :baseline))
+            (setq x (- x (ecase align-x
+                           (:left 0)
+                           (:center (round text-width 2))
+                           (:right text-width))))
+            (setq y (ecase align-y
+                      (:top (+ y baseline))
+                      (:center (+ y baseline (- (floor text-height 2))))
+                      (:baseline y)
+                      (:bottom (+ y baseline (- text-height)))))))
+        (let ((x (round-coordinate x))
+              (y (round-coordinate y)))
+          (when (and (<= #x-8000 x #x7FFF)
+                     (<= #x-8000 y #x7FFF))
+            (font-draw-glyphs
+             (text-style-to-X-font (port medium) (medium-text-style medium))
+             mirror gc x y string
+             #| x (- y baseline) (+ x text-width) (+ y (- text-height baseline )) |#
+             :start start :end end
+             :translate #'translate :size 16)))))))
 
 (defmethod medium-buffering-output-p ((medium clx-medium))
   t)
@@ -1112,7 +1145,7 @@ time an indexed pattern is drawn.")
   (declare (ignore toward-x toward-y transform-glyphs align-x align-y))
   (with-transformed-position ((sheet-native-transformation (medium-sheet medium))
                               x y)
-    (with-clx-graphics (medium)
+    (with-clx-graphics () medium
       (xlib:draw-glyph mirror gc (round-coordinate x) (round-coordinate y)
 		       element
                        :size 16
@@ -1173,7 +1206,7 @@ time an indexed pattern is drawn.")
 
 (defmethod climi::medium-draw-image-design*
     ((medium clx-medium) (design climi::rgb-image-design) x y)
-  (let* ((da (sheet-direct-mirror (medium-sheet medium)))
+  (let* ((da (sheet-xmirror (medium-sheet medium)))
 	 (image (slot-value design 'climi::image))
 	 (width (climi::image-width image))
 	 (height (climi::image-height image)))

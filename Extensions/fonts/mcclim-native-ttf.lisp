@@ -6,21 +6,10 @@
 ;;;   License: LGPL (See file COPYING for details).
 ;;; ---------------------------------------------------------------------------
 ;;;  (c) copyright 2008 by Andy Hefner
-
-;;; This library is free software; you can redistribute it and/or
-;;; modify it under the terms of the GNU Library General Public
-;;; License as published by the Free Software Foundation; either
-;;; version 2 of the License, or (at your option) any later version.
+;;;  (c) copyright 2016 by Daniel Kochmański
 ;;;
-;;; This library is distributed in the hope that it will be useful,
-;;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-;;; Library General Public License for more details.
+;;;    See toplevel file 'Copyright' for the copyright details.
 ;;;
-;;; You should have received a copy of the GNU Library General Public
-;;; License along with this library; if not, write to the 
-;;; Free Software Foundation, Inc., 59 Temple Place - Suite 330, 
-;;; Boston, MA  02111-1307  USA.
 
 (in-package :mcclim-truetype)
 
@@ -49,57 +38,55 @@
 ;;;    CLIM apps are, and the lack of WYSIWYG document editors crying out 
 ;;;    for perfect text spacing in small fonts, we don't really need this.
 
-;; So weird..
-(defun make-vague-font (filename)
-  (let ((val (gethash filename *vague-font-hash*)))
-    (or val
-        (setf (gethash filename *vague-font-hash*)
-              (make-instance 'vague-font
-                             :lib t
-                             :filename filename)))))
 
-;;; Ignore the 'concrete font' indirection.
+(defvar *zpb-font-lock* (climi::make-lock "zpb-font"))
+(defparameter *dpi* 72)
 
-#+NIL
-(defun make-concrete-font (vague-font size &key (dpi *dpi*))
-  (error "Go away."))
+(defclass truetype-font-family (clim-extensions:font-family)
+  ((all-faces :initform nil
+              :accessor all-faces
+              :reader clim-extensions:font-family-all-faces)))
 
-#+NIL
-(defun set-concrete-font-size (face size dpi)
-  (declare (ignore face size dpi)))
+(defclass truetype-face (clim-extensions:font-face)
+  ((all-fonts :initform nil
+              :accessor all-fonts)
+   (font-loader :initarg :loader :reader zpb-ttf-font-loader)))
 
-(defclass zpb-ttf-face (truetype-face)
-  ((font-loader :reader zpb-ttf-font-loader :initarg :loader)
-   (units->pixels :reader zpb-ttf-font-units->pixels :initarg :units->pixels)))
+(defmethod initialize-instance :after ((face truetype-face) &key &allow-other-keys)
+  (let ((family (clim-extensions:font-face-family face)))
+    (pushnew face (all-faces family))))
 
-(let ((font-loader-cache (make-hash-table :test #'equal))
-      (font-cache        (make-hash-table :test #'equal)))
-  (defun make-truetype-face (display filename size)
-    (unless display (break "no display!"))
-    (let* ((loader (or (gethash filename font-loader-cache)
-                       (setf (gethash filename font-loader-cache)
-                             (zpb-ttf:open-font-loader filename))))
-           (units/em (zpb-ttf:units/em loader))
-           (pixel-size (* size (/ *dpi* 72)))
-           (units->pixels (* pixel-size (/ units/em)))           
-           (font (or (gethash (list display loader size) font-cache)
-                     (setf (gethash (list display loader size) font-cache)
-                           (make-instance 'zpb-ttf-face
-                                          :display display
-                                          :filename filename
-                                          :size size
-                                          :units->pixels units->pixels
-                                          :loader loader
-                                          :ascent  (* (zpb-ttf:ascender loader) units->pixels)
-                                          :descent (- (* (zpb-ttf:descender loader) units->pixels)))))))
-      font)))
+(defclass truetype-font ()
+  ((face          :initarg :face :reader truetype-font-face)
+   (size          :initarg :size :reader truetype-font-size)
+   (ascent                       :reader truetype-font-ascent)
+   (descent                      :reader truetype-font-descent)
+   (units->pixels                :reader zpb-ttf-font-units->pixels)))
 
-(defmethod print-object ((object zpb-ttf-face) stream)
+(defmethod initialize-instance :after ((font truetype-font) &key &allow-other-keys)
+  (with-slots (face size ascent descent font-loader units->pixels) font
+    (let ((loader (zpb-ttf-font-loader face)))
+      (setf units->pixels (/ (* size (/ *dpi* 72))
+                             (zpb-ttf:units/em loader))
+            ascent (* (zpb-ttf:ascender loader) units->pixels)
+            descent (- (* (zpb-ttf:descender loader) units->pixels))))
+    (pushnew font (all-fonts face))))
+
+(defmethod clim-extensions:font-face-all-sizes ((face truetype-face))
+  (sort (mapcar #'truetype-font-size (all-fonts face)) #'<))
+
+(defmethod clim-extensions:font-face-text-style
+    ((face truetype-face) &optional size)
+  (make-text-style (clim-extensions:font-family-name
+                    (clim-extensions:font-face-family face))
+                   (clim-extensions:font-face-name face)
+                   size))
+
+(defmethod print-object ((object truetype-font) stream)
   (print-unreadable-object (object stream :type t :identity nil)
-    (with-slots (font-loader filename size ascent descent) object      
-      (format stream "~W size=~A ascent=~A descent=~A" 
-              (or (zpb-ttf:name-entry-value :full-name font-loader) filename)
-              size ascent descent))))
+    (with-slots (size ascent descent units->pixels) object      
+      (format stream " size=~A ascent=~A descent=~A units->pixels=~A"
+              size ascent descent units->pixels))))
 
 (defun glyph-pixarray (font char)
   "Render a character of 'face', returning a 2D (unsigned-byte 8) array
@@ -107,8 +94,10 @@
    values: alpha mask byte array, x-origin, y-origin (subtracted from
    position before rendering), horizontal and vertical advances."
   (declare (optimize (debug 3)))
-  (with-slots (font-loader units->pixels size ascent descent) font
-      (let* ((glyph (zpb-ttf:find-glyph char font-loader))
+  (climi::with-lock-held (*zpb-font-lock*)
+    (with-slots (units->pixels size ascent descent) font
+      (let* ((glyph (zpb-ttf:find-glyph char (zpb-ttf-font-loader
+                                              (truetype-font-face font))))
              (left-side-bearing  (* units->pixels (zpb-ttf:left-side-bearing  glyph)))
              (right-side-bearing (* units->pixels (zpb-ttf:right-side-bearing glyph)))
              (advance-width (* units->pixels (zpb-ttf:advance-width glyph)))
@@ -158,8 +147,8 @@
                 (round advance-width)
                 ;; Bah! Why does X add the vertical advance when we are rendering horizontally?
                 ;; Is this considered a property of the font and glyphs rather than a particular drawing call?
-                0 #+NIL (round (+ ascent descent))))))
+                0 #+NIL (round (+ ascent descent)))))))
 
-(defun font-fixed-width-p (zpb-ttf-font)
-  (declare (ignore zpb-ttf-font))
+(defun font-fixed-width-p (truetype-font)
+  (declare (ignore truetype-font))
   nil)
